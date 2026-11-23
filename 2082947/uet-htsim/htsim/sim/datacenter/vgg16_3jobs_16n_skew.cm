@@ -1,0 +1,19 @@
+Nodes 16
+Connections 16
+Triggers 0
+0->#1 id 1 start 0 size 553430000
+1->#1 id 2 start 0 size 553430000
+2->#1 id 3 start 0 size 553430000
+3->#1 id 4 start 0 size 553430000
+4->#1 id 5 start 0 size 553430000
+5->#1 id 6 start 30 size 553430000
+6->#2 id 7 start 0 size 553430000
+7->#2 id 8 start 0 size 553430000
+8->#2 id 9 start 0 size 553430000
+9->#2 id 10 start 0 size 553430000
+10->#2 id 11 start 30 size 553430000
+11->#3 id 12 start 0 size 553430000
+12->#3 id 13 start 0 size 553430000
+13->#3 id 14 start 0 size 553430000
+14->#3 id 15 start 0 size 553430000
+15->#3 id 16 start 30 size 553430000
