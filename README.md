@@ -9,7 +9,7 @@ This repository extends the single-tenant UEC INC baseline with multi-tenant cap
 1. **Static Multi-Tenant SwitchML (Implemented):**
    - **Per-Job Isolation:** Programmable switches (`IncSwitch`) maintain independent reduction trees, expected child counts, and multicast downlink fan-outs indexed by `job_id`.
    - **Deterministic Core Convergence:** Uplink port selection toward Aggregation and Core tiers uses a deterministic hash on `(job_id, block_id)` so that all branches of the same collective block meet at the exact same spine switch regardless of asymmetric queue loads across shared pods.
-   - **Static SRAM Partitioning:** Each switch divides its total aggregation memory (`-sram_slots`) into fixed, exclusive partitions ($\lfloor \text{total\_sram\_slots} / \text{num\_jobs} \rfloor$). Packets arriving when a job's static partition is full are dropped (`_sram_drops`) and recovered via host RTO retransmissions.
+   - **Static SRAM Partitioning:** Each switch divides its total aggregation memory (`-sram_slots`) into fixed, exclusive partitions (total_sram_slots / num_jobs). Packets arriving when a job's static partition is full are dropped (`_sram_drops`) and recovered via host RTO retransmissions.
    - **RTO State Consistency:** Fixed `UecIncSrc::sendRtxPacket` to properly register retransmitted packets via `createSendRecord()`, preventing `_send_times` assertion failures under heavy congestion and SRAM saturation.
 2. **Dynamic Multi-Tenant ATP (Next Milestone):**
    - Shared dynamic SRAM pooling (first-come, first-served) and best-effort unaggregated bypass fallback to eliminate SRAM drops and multi-tier head-of-line blocking.
