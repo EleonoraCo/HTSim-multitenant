@@ -9,7 +9,7 @@ This repository extends the single-tenant UEC INC baseline with multi-tenant cap
 1. **Static Multi-Tenant SwitchML (Implemented):**
    - **Per-Job Isolation:** Programmable switches (`IncSwitch`) maintain independent reduction trees, expected child counts, and multicast downlink fan-outs indexed by `job_id`.
    - **Deterministic Core Convergence:** Uplink port selection toward Aggregation and Core tiers uses a deterministic hash on `(job_id, block_id)` so that all branches of the same collective block meet at the exact same spine switch regardless of asymmetric queue loads across shared pods.
-   - **Static SRAM Partitioning:** Each switch divides its total aggregation memory (`-sram_slots`) into fixed, exclusive partitions (total_sram_slots / num_jobs). Packets arriving when a job's static partition is full are dropped (`_sram_drops`) and recovered via host RTO retransmissions.
+   - **Static SRAM Partitioning:** Each switch divides its total aggregation memory (`-sram_slots`) into fixed, exclusive partitions (`total_sram_slots / num_jobs`). Packets arriving when a job's static partition is full are dropped (`_sram_drops`) and recovered via host RTO retransmissions.
    - **RTO State Consistency:** Fixed `UecIncSrc::sendRtxPacket` to properly register retransmitted packets via `createSendRecord()`, preventing `_send_times` assertion failures under heavy congestion and SRAM saturation.
 2. **Dynamic Multi-Tenant ATP (Next Milestone):**
    - Shared dynamic SRAM pooling (first-come, first-served) and best-effort unaggregated bypass fallback to eliminate SRAM drops and multi-tier head-of-line blocking.
@@ -34,18 +34,20 @@ This repository extends the single-tenant UEC INC baseline with multi-tenant cap
 
 ### Build Instructions
 
-From the `htsim/sim` directory, configure and compile the project:
+From the `htsim/sim` directory, configure and compile the project inside `build/`:
 
 ```bash
-cd ~/2082947/uet-htsim/htsim/sim
-cmake -S . -B build
-cmake --build build --parallel
+cd ~/HTSim-multitenant/2082947/uet-htsim/htsim/sim
+mkdir -p build
+cd build
+cmake ..
+make -j4
 ```
 
 To recompile only the INC executable after modifying source files:
 
 ```bash
-cd ~/2082947/uet-htsim/htsim/sim/build
+cd ~/HTSim-multitenant/2082947/uet-htsim/htsim/sim/build
 make htsim_inc_uec -j4
 ```
 
@@ -70,12 +72,12 @@ Triggers 0
 
 ---
 
-## Running Multi-Tenant SwitchML Experiments
+## Running Experiments
 
 All simulation commands below must be executed from `sim/datacenter`:
 
 ```bash
-cd ~/2082947/uet-htsim/htsim/sim/datacenter
+cd ~/HTSim-multitenant/2082947/uet-htsim/htsim/sim/datacenter
 ```
 
 ### Key CLI Parameters for `htsim_inc_uec`
@@ -85,12 +87,25 @@ cd ~/2082947/uet-htsim/htsim/sim/datacenter
 | `-nodes <N>` | Number of host nodes in the Fat-Tree topology | `-nodes 16` |
 | `-strat <mode>` | Multipath routing strategy | `-strat ecmp` |
 | `-tm <file.cm>` | Path to the traffic/connection matrix file | `-tm vgg16_3jobs_16n.cm` |
-| `-sram_slots <K>` | Total SwitchML SRAM aggregation slots per switch (statically split across active jobs) | `-sram_slots 1024` |
+| `-sram_slots <K>` | Total SwitchML SRAM aggregation slots per switch (default `1024`, statically split across active jobs) | `-sram_slots 1024` |
 | `-end <us>` | Maximum simulation duration in microseconds | `-end 1000000` |
 
 ---
 
-### 1. Functional Sanity Test (2 Asymmetric Jobs)
+### 1. Single-Tenant Baseline Test (Original Fraschetti INC)
+
+Generates and runs a standard 16-node single-tenant All-Reduce (`100 KB` per worker) using the backward-compatible `#` syntax:
+
+```bash
+python3 connection_matrices/gen_allreduce_ina.py test_inc.cm 16 16 100000
+./htsim_inc_uec -nodes 16 -strat ecmp -tm test_inc.cm -end 100000
+```
+
+**Expected behavior:** All 16 workers finish simultaneously at `10.124 us` with `Rtx: 0`.
+
+---
+
+### 2. Functional Multi-Tenant Sanity Test (2 Asymmetric Jobs)
 
 Verifies logical isolation, independent reduction trees, and synchronized completion across two concurrent jobs of different sizes (`100 KB` for Job `#1` on nodes `0..7`, `200 KB` for Job `#2` on nodes `8..15`):
 
@@ -117,34 +132,36 @@ Triggers 0
 15->#2 id 16 start 0 size 200000
 EOF
 
-./htsim_inc_uec -nodes 16 -strat ecmp -tm test_multitenant.cm -sram_slots 1024 -end 100000
+./htsim_inc_uec -nodes 16 -strat ecmp -tm test_multitenant.cm -end 100000
 ```
 
 **Expected behavior:** Job `#1` completes at `10.124 us` (`25` packets/worker) and Job `#2` completes at `18.9109 us` (`49` packets/worker) with `Rtx: 0` and `SRAM Static Drops: 0`.
 
 ---
 
-### 2. VGG16 3-Job Multi-Tenant Benchmark
+### 3. VGG16 3-Job Multi-Tenant Benchmark (Static SwitchML)
 
 Models three concurrent distributed training jobs running **VGG16** ($\approx 138.35\text{M}$ parameters, **$553,430,000\text{ bytes}$ / $553.43\text{ MB}$** gradient tensor in FP32 per worker) on a 16-node Fat-Tree ($k=4$, $100\text{ Gbps}$ links, $4150\text{ B}$ MTU):
 - **Job `#1`:** 6 workers (nodes `0..5`)
 - **Job `#2`:** 5 workers (nodes `6..10`)
 - **Job `#3`:** 5 workers (nodes `11..15`)
 
-#### Step A: Generate the Synchronous Workload (`start 0`)
+#### Step A: Generate & Run the Synchronous Workload (`start 0`)
 
 ```bash
 python3 connection_matrices/gen_vgg16_3jobs.py vgg16_3jobs_16n.cm 16
-```
 
-Run with ample SRAM (`1024` total slots $\rightarrow 341$ slots/job) and constrained SRAM (`48` total slots $\rightarrow 16$ slots/job):
-
-```bash
-# Ample SRAM (baseline line-rate performance)
+# Test 1: 1024 total slots -> 341 static slots/job
 ./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n.cm -sram_slots 1024 -end 500000
 
-# Constrained SRAM (synchronous start)
-./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n.cm -sram_slots 48 -end 500000
+# Test 2: 96 total slots -> 32 static slots/job
+./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n.cm -sram_slots 96 -end 500000
+
+# Test 3: 48 total slots -> 16 static slots/job
+./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n.cm -sram_slots 48 -end 1000000
+
+# Test 4: 24 total slots -> 8 static slots/job
+./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n.cm -sram_slots 24 -end 1000000
 ```
 
 #### Step B: Generate & Run the Straggler-Skew Workload (`30 us` jitter)
@@ -157,10 +174,10 @@ sed -i 's/^5->#1 id 6 start 0/5->#1 id 6 start 30/' vgg16_3jobs_16n_skew.cm
 sed -i 's/^10->#2 id 11 start 0/10->#2 id 11 start 30/' vgg16_3jobs_16n_skew.cm
 sed -i 's/^15->#3 id 16 start 0/15->#3 id 16 start 30/' vgg16_3jobs_16n_skew.cm
 
-# 1. Ample SRAM (1024 slots -> 341 static slots/job): absorbs the 30 us skew cleanly
+# Ample SRAM (1024 total slots -> 341 static slots/job): absorbs the 30 us skew cleanly
 ./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n_skew.cm -sram_slots 1024 -end 1000000
 
-# 2. Constrained SRAM (48 slots -> 16 static slots/job): saturates static slices and triggers SRAM drops
+# Constrained SRAM (48 total slots -> 16 static slots/job): saturates static slices and triggers SRAM drops
 ./htsim_inc_uec -nodes 16 -strat ecmp -tm vgg16_3jobs_16n_skew.cm -sram_slots 48 -end 1000000
 ```
 
@@ -189,7 +206,7 @@ SwitchML SRAM total slots: 1024 | SRAM Static Drops: 0
 From `sim/datacenter/validation`, the upstream UEC congestion control validation suite can be run via:
 
 ```bash
-cd ~/2082947/uet-htsim/htsim/sim/datacenter/validation
+cd ~/HTSim-multitenant/2082947/uet-htsim/htsim/sim/datacenter/validation
 python3 validate_all.py --config_json_file example_validate.json > out.txt
 ```
 
@@ -197,8 +214,9 @@ python3 validate_all.py --config_json_file example_validate.json > out.txt
 To compile and execute the unit test suite from `sim/`:
 
 ```bash
-cd ~/2082947/uet-htsim/htsim/sim
-cmake -S . -B build -DENABLE_TESTS=ON
-cmake --build build --parallel
-cd build && ctest
+cd ~/HTSim-multitenant/2082947/uet-htsim/htsim/sim
+mkdir -p build && cd build
+cmake .. -DENABLE_TESTS=ON
+make -j4
+ctest
 ```
