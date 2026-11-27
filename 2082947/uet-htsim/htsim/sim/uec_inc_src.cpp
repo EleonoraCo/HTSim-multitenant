@@ -105,30 +105,50 @@ void UecIncSrc::receivePacket(Packet& pkt, uint32_t portnum) {
         IncPacket* inc_pkt = (IncPacket*)&pkt;
         UecDataPacket::seq_t seqno = inc_pkt->_inc_block_id;
 
-        mem_b original_pkt_size = _mss; 
+        UecDataPacket::seq_t cum_ack = seqno + 1;
+        if (_atp_mode) {
+            if (_atp_acked_blocks.find(seqno) != _atp_acked_blocks.end()) {
+                pkt.free();
+                return;
+            }
+
+            if (inc_pkt->_inc_is_bypassed && _inc_full_job_mask != 0) {
+                _atp_partial_masks[seqno] |= inc_pkt->_inc_worker_mask;
+                if (_atp_partial_masks[seqno] != _inc_full_job_mask) {
+                    pkt.free();
+                    return;
+                }
+                _atp_partial_masks.erase(seqno);
+            }
+
+            _atp_acked_blocks.insert(seqno);
+            while (_atp_acked_blocks.find(_atp_contiguous_block) != _atp_acked_blocks.end()) {
+                _atp_contiguous_block++;
+            }
+            cum_ack = _atp_contiguous_block;
+        }
+
+        mem_b original_pkt_size = _mss;
         auto it = _tx_bitmap.find(seqno);
         if (it != _tx_bitmap.end()) {
             original_pkt_size = it->second.pkt_size;
         }
 
         uint64_t fake_recvd_bytes = _recvd_bytes + original_pkt_size;
-        _recvd_bytes += original_pkt_size; 
         if (_highest_recv_seqno < seqno) {
-            _highest_recv_seqno = seqno; 
+            _highest_recv_seqno = seqno;
         }
 
         UecAckPacket* fake_ack = UecAckPacket::newpkt(
-            _flow, NULL, seqno + 1, seqno, seqno, 0, false, fake_recvd_bytes, 0, 0
+            _flow, NULL, cum_ack, seqno, seqno, 0, false, fake_recvd_bytes, 0, 0
         );
-        
+
         processAck(*fake_ack);
 
         if (_receiver_based_cc) {
             handlePull(_pull_target);
         }
 
-        // cout << "INC_SRC [" << _nodename << "] ALL-REDUCE COMPLETE - Block: " << seqno << endl;
-        
         fake_ack->free();
         pkt.free();
         return;
@@ -152,6 +172,8 @@ mem_b UecIncSrc::sendNewPacket(const Route& route) {
     // --- ADD TAG INC ---
     p->_is_inc = true;
     p->_inc_job_id = _inc_job_id; // ID Job
+    p->_inc_worker_mask = _inc_worker_mask;
+    p->_inc_is_bypassed = false;
     p->_inc_block_id = _highest_sent;
     p->_inc_int_data = (rand() % 100) + 1; 
     p->_inc_last_switch_id = -1;
@@ -186,6 +208,8 @@ mem_b UecIncSrc::sendRtxPacket(const Route& route) {
 
     p->_is_inc = true;
     p->_inc_job_id = _inc_job_id; // same job ID
+    p->_inc_worker_mask = _inc_worker_mask;
+    p->_inc_is_bypassed = false;
     p->_inc_block_id = seqno;     // use seqno as block_id for simplicity
     p->_inc_int_data = 1;         // dummy data
     p->_inc_last_switch_id = -1;  // Reset

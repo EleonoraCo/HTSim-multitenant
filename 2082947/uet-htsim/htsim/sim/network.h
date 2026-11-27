@@ -69,11 +69,13 @@ class Packet {
     friend class PacketFlow;
  public:
 
-    // IncPacket fields
-    bool _is_inc = false;       // boolean to indicate if the packet is an INC packet
-    uint32_t _inc_job_id = 0;   // ID job INC
-    uint32_t _inc_block_id = 0; // ID block
-    uint32_t _inc_int_data = 0; // Payload
+// IncPacket fields
+    bool _is_inc = false;           // boolean to indicate if the packet is an INC packet
+    uint32_t _inc_job_id = 0;       // ID job INC
+    uint32_t _inc_block_id = 0;     // ID block
+    uint32_t _inc_int_data = 0;     // Payload
+    uint64_t _inc_worker_mask = 0;  // ATP: bitmap dei worker che hanno contribuito al blocco
+    bool _inc_is_bypassed = false;  // ATP: true se il pacchetto ha bypassato uno switch pieno
                                 
 
     bool _is_straggler = false; 
@@ -84,7 +86,7 @@ class Packet {
     
     /* empty constructor; Packet::set must always be called as
        well. It's a separate method, for convenient reuse */
-    Packet() {_is_header = false; _bounced = false; _type = IP; _flags = 0; _refcount = 0; _dst = UINT32_MAX; _hop_count = 0; _pathid = UINT32_MAX; _direction = NONE; _ingressqueue = NULL; _channel = 0; _is_inc = false; _inc_job_id = 0; _inc_block_id = 0; _inc_int_data = 0; _is_straggler = false; _inc_last_switch_id = -1;}
+    Packet() {_is_header = false; _bounced = false; _type = IP; _flags = 0; _refcount = 0; _dst = UINT32_MAX; _hop_count = 0; _pathid = UINT32_MAX; _direction = NONE; _ingressqueue = NULL; _channel = 0; _is_inc = false; _inc_job_id = 0; _inc_block_id = 0; _inc_int_data = 0; _is_straggler = false; _inc_last_switch_id = -1; _inc_worker_mask = 0; _inc_is_bypassed = false;}
 
     /* say "this packet is no longer wanted". (doesn't necessarily
        destroy it, so it can be reused) */

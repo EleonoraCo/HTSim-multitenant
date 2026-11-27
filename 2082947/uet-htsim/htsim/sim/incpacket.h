@@ -8,20 +8,24 @@ public:
     static PacketDB<IncPacket> _packetdb;
     static PacketFlow _inc_flow;
 
-    inline static IncPacket* newpkt(const Route& route, 
-                                    uint32_t job_id, uint32_t block_id, 
+    inline static IncPacket* newpkt(const Route& route,
+                                    uint32_t job_id, uint32_t block_id,
                                     uint32_t int_data,
                                     packet_type p_type,
-                                    uint32_t pkt_size) {
-        
+                                    uint32_t pkt_size,
+                                    uint64_t worker_mask = 0,
+                                    bool is_bypassed = false) {
+
         IncPacket* p = _packetdb.allocPacket();
-        
+
         // Base parameter initialization
         p->_type = p_type;
         p->_is_inc = true;
         p->_inc_job_id = job_id;
         p->_inc_block_id = block_id;
         p->_inc_int_data = int_data;
+        p->_inc_worker_mask = worker_mask;
+        p->_inc_is_bypassed = is_bypassed;
         p->set_size(pkt_size);
         p->set_route(route);
         p->_flow = &_inc_flow;

@@ -154,7 +154,18 @@ int main(int argc, char **argv) {
          IncSwitch::_total_sram_slots = atoi(argv[i+1]);
          cout << "SwitchML Static SRAM slots per switch: " << IncSwitch::_total_sram_slots << endl;
          i++;
-        } else if (!strcmp(argv[i],"-tiers")) {
+        } 
+        else if (!strcmp(argv[i],"-inc_mode")) {
+         if (!strcmp(argv[i+1], "atp")) {
+             IncSwitch::_inc_mode = INC_MODE_ATP;
+             cout << "INC Protocol Mode: ATP (Dynamic SRAM + Best-Effort Bypass)" << endl;
+         } else {
+             IncSwitch::_inc_mode = INC_MODE_SWITCHML;
+             cout << "INC Protocol Mode: SwitchML (Static Partitioned SRAM)" << endl;
+         }
+         i++;
+        }
+        else if (!strcmp(argv[i],"-tiers")) {
             tiers = atoi(argv[i+1]);
             cout << "tiers " << tiers << endl;
             assert(tiers == 2 || tiers == 3);
@@ -831,14 +842,29 @@ int main(int argc, char **argv) {
             UecNIC* nic_to_use = (u_dest == UINT32_MAX) ? nics.at(src).get() : nics.at(dest).get();
             UecPullPacer* pacer_to_use = (u_dest == UINT32_MAX) ? pacers[src].get() : pacers[dest].get();
 
-            if (u_dest == UINT32_MAX) {
-                UecIncSrc* inc_src = new UecIncSrc(traffic_logger, eventlist, std::move(mp), *nics.at(src), ports);
-                inc_src->setIncJobId(crt->inc_job_id);
-                uec_src = inc_src;
-                IncSwitch::add_job_participant(src, crt->inc_job_id);
-            } else {
-                uec_src = new UecSrc(traffic_logger, eventlist, std::move(mp), *nics.at(src), ports);
-            }
+         static std::map<uint32_t, std::vector<UecIncSrc*>> job_inc_srcs;
+         if (u_dest == UINT32_MAX) {
+             UecIncSrc* inc_src = new UecIncSrc(traffic_logger, eventlist, std::move(mp), *nics.at(src), ports);
+            inc_src->setIncJobId(crt->inc_job_id);
+            inc_src->setAtpMode(IncSwitch::_inc_mode == INC_MODE_ATP);
+             IncSwitch::add_job_participant(src, crt->inc_job_id);
+
+             uint64_t my_mask = IncSwitch::_host_worker_masks[crt->inc_job_id][src];
+             inc_src->setIncWorkerMask(my_mask);
+             job_inc_srcs[crt->inc_job_id].push_back(inc_src);
+
+             uint64_t full_mask = 0;
+             for (uint32_t host_id : IncSwitch::_job_participants[crt->inc_job_id]) {
+                 full_mask |= IncSwitch::_host_worker_masks[crt->inc_job_id][host_id];
+             }
+             for (auto* member : job_inc_srcs[crt->inc_job_id]) {
+                 member->setIncFullJobMask(full_mask);
+             }
+
+             uec_src = inc_src;
+         } else {
+             uec_src = new UecSrc(traffic_logger, eventlist, std::move(mp), *nics.at(src), ports);
+         }
 
             if (crt->flowid) uec_src->setFlowId(crt->flowid);
 
@@ -864,18 +890,11 @@ int main(int argc, char **argv) {
             uint32_t logical_dest = (u_dest == UINT32_MAX) ? (uint32_t)src : u_dest;
             simtime_picosec base_rtt_bw_two_points = 2 * topo_cfg->get_two_point_diameter_latency(src, logical_dest) + transmission_delay;
             simtime_picosec rtt_to_use = enable_accurate_base_rtt ? base_rtt_bw_two_points : network_max_unloaded_rtt;
-
+            
             if (u_dest == UINT32_MAX) {
-                static_cast<UecIncSrc*>(uec_src)->initIncNscc(cwnd_b, rtt_to_use);
-                mem_b realistic_max = 10 * network_max_unloaded_rtt * (linkspeed / 8); 
-                uec_src->setMaxWnd(realistic_max);
-                uec_src->setCwnd(realistic_max);
-                if (uec_snk->pullPacer()) {
-                    uec_snk->pullPacer()->updatePullRate(UecPullPacer::PCIE, 2.0);
-                }
+                ((UecIncSrc*)uec_src)->initIncNscc(cwnd_b, rtt_to_use);
             } else {
-                if (receiver_driven) uec_src->initRccc(cwnd_b, rtt_to_use);
-                if (sender_driven) uec_src->initNscc(cwnd_b, rtt_to_use);
+                uec_src->initNscc(cwnd_b, rtt_to_use);
             }
 
             uec_srcs.push_back(uec_src);
@@ -1015,8 +1034,10 @@ int main(int argc, char **argv) {
         cout << "Hop " << i << " Count " << counts[i] << endl;
     */  
 
-    cout << "SwitchML SRAM total slots: " << IncSwitch::_total_sram_slots
-         << " | SRAM Static Drops: " << IncSwitch::_sram_drops << endl;
+    cout << "INC Mode: " << (IncSwitch::_inc_mode == INC_MODE_ATP ? "ATP" : "SwitchML")
+      << " | SRAM total slots: " << IncSwitch::_total_sram_slots
+      << " | SRAM Static Drops: " << IncSwitch::_sram_drops
+      << " | ATP Bypassed Packets: " << IncSwitch::_atp_bypassed_packets << endl;
 
     return EXIT_SUCCESS;
 }
